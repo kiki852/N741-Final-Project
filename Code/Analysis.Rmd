@@ -1,0 +1,533 @@
+---
+title: "Is Access to Electricity Linked to Hunger in Guatemala?"
+author: "Chiara Brust"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+  df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Graduate School/Spring 2023/Big Data/Project/N741-Final-Project")
+
+```
+
+# Introduction
+
+The focus of this project is to see if there’s a correlation between access (or lack thereof) to electricity and hunger in Guatemala. My first thoughts are that there will be an association since lack of access to a power grid could also indicate lack of access to a stable food supply. However, I’m unsure if this hypothesis is correct because it’s just as likely that rural areas that are disconnected from the central power grid will grow their own food and be perfectly prepared agriculturally. Therefore, this project seeks to understand if there is an association in mean access to electricity and population hunger indicators by department.
+
+# Data
+This data comes from the SDG Data Alliance website (https://www.sdg.org), which acts as a repository of all available country data relating to the Sustainable Development Goals. I chose data from Guatemala and picked data related to achieving the SDGs Zero Hunger and Affordable and Clean Energy. These files include information on the percent of people in each region within Guatemala who have access to electricity along with the percent of people with hunger indicators such as anemia. In addition, the data contains shapefiles for the country, along with GeoIDs for each department within Guatemala.
+
+The following GitHub repository contains all the files used, including the shapefiles and statistical data: https://github.com/kiki852/N741-Final-Project.git
+
+
+
+
+
+
+
+```{r}
+# Load libraries
+library(tidyverse) # Manipulating data
+library(readr) # Importing .csv files
+library(sf) # Working with shapefiles
+library(tmap) # Plotting
+library(knitr) # For creating a table while knitting
+library(kableExtra) # For modifying kable tables
+
+```
+
+
+
+
+
+# Bringing in the hunger and electricity data
+```{r}
+# Import data
+hunger_data <- read_csv("Inputs/Zero_Hunger.csv")
+energy_data <- read.csv("Inputs/Affordable_and_Clean_Energy.csv")
+
+
+# View data
+summary(hunger_data)
+summary(energy_data)
+```
+I'm noticing that in the 'hunger_data' dataframe, the variables 'SH_STA_ANEM' and 'SH_STA_ANEM_PREG' have the exact same summary statistics. We also have several blank columns with no data, so I'll have to clean up this dataframe and select only the variables of interest. I'm only going to work with the `SH_STA_ANEM` variable and assume that this is the correct data for percent of women with anemia whether they are pregnant or not since this information is not specified in the source data webpage. This will have to be noted as potentially incorrect at the end of this analysis though.
+
+
+```{r}
+# Selecting only columns of interest and renaming them into something more meaningful
+hunger_data <- hunger_data %>% 
+  select(4, 10, 14, 18, 23) %>% 
+  rename(percent_anemic= SH_STA_ANEM,
+         percent_child_stunt= SH_STA_STNT,
+         percent_child_wasted= SH_STA_WAST,
+         percent_child_ovrwgt= SN_STA_OVWGT)
+
+hunger_data
+
+energy_data <- energy_data %>%
+  select(4, 10) %>% 
+  rename(percent_with_elec= EG_ACS_ELEC)
+
+energy_data
+
+
+
+```
+
+
+
+# Bringing in the shapefile
+```{r}
+# Import data
+guat_sf <- st_read("Inputs/Zero_Hunger.shp")
+
+
+# View the shapefile
+guat_sf
+
+
+```
+Noting that the coordinate reference system has already been set to WGS 84.
+
+It appears that the hunger data has already been joined with this shapefile, but the variables are not exactly the same. Since I've already cleaned up our 'hunger_data' dataframe, I'm going to select only the shapefile-relevant variables and clean up this 'guat_sf' dataframe. I'm also going to change some of the variable names such as 'shape_are' to match the corresponding variables in 'energy_data' and 'hunger_data'.
+
+```{r}
+# Select only variables of interest
+guat_sf <- guat_sf %>% 
+  select(1:5, 7:9, 28) %>% 
+  rename(Reporting_Year= Reporting_,
+         Shape_Area= Shape__Are,
+         Shape_Length= Shape__Len)
+
+
+# Plotting the shapefile variables
+plot(guat_sf)
+
+# Plotting just the country 
+tm_shape(guat_sf)+
+  tm_polygons() +
+  tm_compass(
+    type= "arrow",
+    position= c("right", "top")
+  ) +
+  tm_scale_bar()
+
+```
+
+
+
+# Problems with Department Information
+I've realized that there's not a column that lists the department names for each `GeoID` or `OBJECTID`. When searching through the website, there's also no information on which region the GeoIDs correspond to. I looked online and it appears that these GeoIDs are unique for this dataset and have no meaning to external sources, so I will have to plot the shapefile and include the `OBJECTID` label for each region before comparing this to a publicly available map of Guatemala and manually create a column that corresponds to each department and `OBJECTID`.
+
+```{r}
+
+# Compute centroids and create a new data frame
+# This is needed to add a label of each `OBJECTID` on top of the middle of each department region
+centroids <- st_centroid(guat_sf)
+centroids_df <- data.frame(OBJECTID = guat_sf$OBJECTID, 
+                            x = st_coordinates(centroids)[, 1], 
+                            y = st_coordinates(centroids)[, 2])
+
+# Plot the map with `OBJECTID` labels
+ggplot() + 
+  geom_sf(data= guat_sf, aes(fill = OBJECTID)) + 
+  geom_text(data = centroids_df, aes(label = OBJECTID, x = x, y = y), size = 3) +
+  guides(fill=FALSE) +
+  ggtitle("ObjectIDs Corresponding to Each Guatemalan Department")
+
+```
+
+Embedding an image of Guatemalan departments from geology.com
+<img src="guatemala-departments-map.gif" width="500" height="550" />
+
+
+# Joining Department values with our shapefile
+```{r}
+
+# Create a lookup table of ObjectIDs and department names
+lookup_table <- data.frame(
+  OBJECTID = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+               12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22),
+  Department = c("Guatemala", "El Progreso", "Antigua", "Chimaltenango", "Escuintla", "Cuilapa", "Solola",
+                 "Totonicapan", "Quetzaltenango", "Mazatenango", "Retalhuleu", "San Marcos", "Huehuetenango",
+                 "Quiche", "Baja Verapaz", "Alta Verapaz", "Peten", "Izabal", "Zacapa", "Chiquimula", "Jalapa",
+                 "Jutiapa"))
+
+# Join the lookup table to the shapefile
+guat_sf_dpt <- left_join(guat_sf, lookup_table, by = "OBJECTID")
+
+```
+
+
+
+
+
+# Joining the hunger and electricity data with the shapefile
+```{r}
+# Joining data
+data_sf <- full_join(guat_sf_dpt, energy_data, by= "GeoID") %>% 
+  full_join(hunger_data, by= "GeoID")
+
+# Check out the data
+str(data_sf)
+
+```
+
+All looks good. Now it's time to explore the data
+
+
+
+
+
+# Exploratory Data Analysis
+
+## Summary Statistics
+```{r}
+
+data_sf %>%
+  st_drop_geometry() %>%
+  select(10:14) %>%
+  rename(
+    `% with Electricity` = percent_with_elec,
+    `% Anemic` = percent_anemic,
+    `% Children Stunted` = percent_child_stunt,
+    `% Children Wasted` = percent_child_wasted,
+    `% Children Overweight` = percent_child_ovrwgt
+  ) %>% 
+  summary() %>%
+  kable(caption = "Summary Statistics for Hunger and Energy in Guatemala") %>%
+  kable_styling(latex_options = c("striped", "scale_down"),
+                full_width = FALSE)
+
+```
+
+
+
+# Comparing Departments
+I'm going to create bar graphs of each department with each electricity/hunger variable
+
+```{r}
+
+# Electricity
+ggplot(data_sf) +
+  geom_bar(aes(x= reorder(Department, -percent_with_elec), y= percent_with_elec), 
+           stat="identity", fill = "#69b3a2", width = 0.5) +
+  labs(x = "Department", y = "Percent with electricity",
+       title = "Electricity Access by Department in Guatemala") +
+  theme_minimal() +
+  geom_hline(yintercept = 50, size = 0.5, color = "grey50", linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+
+```{r}
+
+# Anemia
+ggplot(data_sf) +
+  geom_bar(aes(x= reorder(Department, percent_anemic), y= percent_anemic), 
+           stat="identity", fill = "#CA054D", width = 0.5) +
+  labs(x = "Department", y = "Percent with Anemia",
+       title = "Prevelance of Anemia by Department in Guatemala") +
+  theme_minimal() +
+  geom_hline(yintercept = 22.1, size = 0.5, color = "grey50", linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+```{r}
+
+# Children Overweight
+ggplot(data_sf) +
+  geom_bar(aes(x= reorder(Department, percent_child_ovrwgt), y= percent_child_ovrwgt), 
+           stat="identity", fill = "#3B1C32", width = 0.5) +
+  labs(x = "Department", y = "Percent of Children who are Overweight",
+       title = "Children who are Overweight by Department in Guatemala") +
+  theme_minimal() +
+  geom_hline(yintercept = 8.5, size = 0.5, color = "grey50", linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+
+
+```{r}
+
+# Childhood Stunting
+ggplot(data_sf) +
+  geom_bar(aes(x= reorder(Department, percent_child_stunt), y= percent_child_stunt), 
+           stat="identity", fill = "#FFCF9C", width = 0.5) +
+  labs(x = "Department", y = "Percent of Children with Stunting",
+       title = "Childhood Stunting by Department in Guatemala") +
+  theme_minimal() +
+  geom_hline(yintercept = 70, size = 0.5, color = "grey50", linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+
+
+```{r}
+
+# Childhood Wasting
+ggplot(data_sf) +
+  geom_bar(aes(x= reorder(Department, percent_child_wasted), y= percent_child_wasted), 
+           stat="identity", fill = "#B96D40", width = 0.5) +
+  labs(x = "Department", y = "Percent of Children who are Wasted",
+       title = "Childhood Wasting by Department in Guatemala") +
+  theme_minimal() +
+  geom_hline(yintercept = 1.6, size = 0.5, color = "grey50", linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+
+# Exploratory Comparison of Electricity Access with Each Variable of Interest
+
+
+```{r}
+# Electricity and Anemia
+
+# Get line of best fit
+fit_anemia <- lm(percent_anemic ~ percent_with_elec, data = data_sf)
+
+
+# Create the plot
+ggplot(data_sf, aes(x = percent_with_elec, y = percent_anemic)) +
+  geom_point() +
+  geom_smooth(method = "lm", color= "darkgreen") +
+  geom_text(x = 65, y = 15, label = paste0("Slope: ", round(coef(fit_anemia)[2], 2))) +
+  ggtitle("Anemia by Access to Electricity in Guatemala") +
+  labs (x= "Percent with Electricity", y= "Percent with Anemia")
+
+```
+It looks like there is not a solid relationship between access to electricity and prevalence of anemia in this country. If anything, there is a downward trend that shows as more people get access to electricity, the lower the prevalence of anemia.
+
+
+
+```{r}
+# Electricity and Childhood Stunting
+
+# Get line of best fit
+fit_stunt <- lm(percent_child_stunt ~ percent_with_elec, data = data_sf)
+
+
+# Create the plot
+ggplot(data_sf, aes(x = percent_with_elec, y = percent_child_stunt)) +
+  geom_point() +
+  geom_smooth(method = "lm", color= "darkgreen") +
+  geom_text(x = 65, y = 45, label = paste0("Slope: ", round(coef(fit_stunt)[2], 2))) +
+  ggtitle("Childhood Stunting by Access to Electricity in Guatemala") +
+  labs(x = "Percent with Electricity", y = "Percent of Children Stunted")
+
+
+```
+The trends in this plot look very similar to the plot of Anemia and Access to Electricity. There is not a strong relationship between the two variables, but the overall trend is a small downward slope.
+
+
+```{r}
+# Electricity and Childhood Wasting
+
+# Get line of best fit
+fit_waste <- lm(percent_child_wasted ~ percent_with_elec, data = data_sf)
+
+
+# Create the plot
+ggplot(data_sf, aes(x = percent_with_elec, y = percent_child_wasted)) +
+  geom_point() +
+  geom_smooth(method = "lm", color= "darkgreen") +
+  geom_text(x = 65, y = 0.5, label = paste0("Slope: ", round(coef(fit_waste)[2], 2))) +
+  ggtitle("Childhood Wasting by Access to Electricity in Guatemala") +
+  labs(x = "Percent with Electricity", y = "Percent of Children Wasted")
+
+
+```
+This is interesting- based on this plot, it appears that as access to electricity increases, the percent of children who are wasted also increases (albeit slightly). This is the opposite trend than what I was expecting. Although wasting refers to a short term period of malnutrition that results in a low BMI, stunting is very similar but refers to long term malnutrition instead of short term. Since both of these variables are similar, I would expect them to have similar trends.
+
+
+
+
+
+```{r}
+# Electricity and Overweight Children
+
+# Get line of best fit
+fit_ovrwgt <- lm(percent_child_ovrwgt ~ percent_with_elec, data = data_sf)
+
+
+# Create the plot
+ggplot(data_sf, aes(x = percent_with_elec, y = percent_child_ovrwgt)) +
+  geom_point() +
+  geom_smooth(method = "lm", color= "darkgreen") +
+  geom_text(x = 63, y = 4, label = paste0("Slope: ", round(coef(fit_ovrwgt)[2], 2))) +
+  ggtitle("Children who are Overweight by Access to Electricity in Guatemala") +
+  labs(x = "Percent with Electricity", y = "Percent of Children who are Overweight")
+
+
+```
+This plot illustrates that there is a slight upward trend between the two variables- as access to electricity increases, the percent of children who are overweight slightly increases as well. 
+
+
+
+# Spatial Plots
+The following are plots of each department's corresponding hunger and electricity indicators.
+
+
+```{r}
+
+
+# Electricity
+ggplot(data_sf) +
+  geom_sf(aes(fill = percent_with_elec)) +
+  scale_fill_gradient2(low = "red",
+                       mid = "green",
+                       high = "blue",
+                       midpoint=75) +
+  ggtitle("Map of Access to Electricity in each Guatemalan Department") +
+  labs (fill= "Percent with Electricity")
+
+
+
+# Anemia
+ggplot(data_sf) +
+  geom_sf(aes(fill = percent_anemic)) +
+  scale_fill_gradient2(low = "blue",
+                       mid = "green",
+                       high = "red",
+                       midpoint=15) +
+  ggtitle("Map of Anemic Children in each Guatemalan Department") +
+  labs (fill= "Percent of Children with Anemia")
+
+
+
+# Childhood Stunting
+ggplot(data_sf) +
+  geom_sf(aes(fill = percent_child_stunt)) +
+  scale_fill_gradient2(low = "blue",
+                       mid = "green",
+                       high = "red",
+                       midpoint=44) +
+  ggtitle("Map of Stunted Children in each Guatemalan Department") +
+  labs (fill= "Percent of Children who are Stunted")
+
+
+
+
+# Childhood Wasting
+ggplot(data_sf) +
+  geom_sf(aes(fill = percent_child_wasted)) +
+  scale_fill_gradient2(low = "blue",
+                       mid = "green",
+                       high = "red",
+                       midpoint=1) +
+  ggtitle("Map of Wasted Children in each Guatemalan Department") +
+  labs (fill= "Percent of Children who are Wasted")
+
+
+
+
+# Children Overweight
+ggplot(data_sf) +
+  geom_sf(aes(fill = percent_child_ovrwgt)) +
+  scale_fill_gradient2(low = "blue",
+                       mid = "green",
+                       high = "red",
+                       midpoint= 5.7) +
+  ggtitle("Map of Overweight Children in each Guatemalan Department") +
+  labs (fill= "Percent of Children who are Overweight")
+
+
+
+
+```
+
+Based on these maps, it appears that more people in the Southern regions of Guatemala tend to have more access to electricity than the Northern regions. This makes sense because the capital city of Antigua lies in the South near these regions, so more urban populations likely reside here compared to rural ones. For anemia, the pattern is less obvious. It seems that there are more anemic populations living on both the Southern and Northern departments. The spatial trend is also less clear for the percent of children who are stunted. For this variable, it appears that there are lower levels of stunting in the Southern-most and Western departments, but this is not a strong pattern. However, there is a cluster of departments that have relatively high levels of childhood stunting in the East. This is unexpected because there are lower levels of anemia in this same region. On the other hand, there is a higher prevalence of overweight children on the Eastern side of the country.
+
+
+
+
+
+
+# Correlation Analysis
+
+Before I run the correlation tests, I need to check my assumptions. The plots above show me that we have linear relationships that are homoscedastic. I noticed that there is an outlier at the 50% electricity mark that may affect our correlation analysis, so I'm going to filter that value out. I'm also going to test for normality to make sure that that assumption is satisfied.
+
+
+```{r}
+
+# Filter out the outlier
+data_sf_cropped <- data_sf %>% 
+  filter(percent_with_elec> 50)
+
+# Test for normality using Shapiro-Wilk test
+shapiro.test(data_sf_cropped$percent_with_elec)
+shapiro.test(data_sf_cropped$percent_anemic)
+shapiro.test(data_sf_cropped$percent_child_stunt)
+shapiro.test(data_sf_cropped$percent_child_wasted)
+shapiro.test(data_sf_cropped$percent_child_ovrwgt)
+
+```
+When running a Shapiro-Wilk normality test, a p-value greater than 0.05 indicates that the variable of interest is normally distributed. After cropping the data to remove the outlier, it appears that every variable except `percent_child_ovrwgt` is normally distributed. So, I'll run a Pearson's correlation coefficient test on the normally distributed variables and a Spearman's rank correlation coefficient test on the variable that is not normally distributed.
+
+
+```{r}
+
+# Pearson's correlation coefficient test
+
+# Anemia
+cor.test(data_sf_cropped$percent_with_elec, data_sf_cropped$percent_anemic, method = "pearson")
+# Childhood stunting
+cor.test(data_sf_cropped$percent_with_elec, data_sf_cropped$percent_child_stunt, method = "pearson")
+# Childhood wasting
+cor.test(data_sf_cropped$percent_with_elec, data_sf_cropped$percent_child_wasted, method = "pearson")
+
+
+
+# Spearman's rank correlation coefficient test
+
+# Children Overweight
+cor.test(data_sf_cropped$percent_with_elec, data_sf_cropped$percent_child_ovrwgt, method = "spearman")
+
+```
+
+For electricity and anemia, the p-value is greater than 0.05 (p-value= 0.5254). Therefore, there is not statistically significant relationship between these two variables.
+
+For electricity and childhood stunting, the p-value is also greater than 0.05 (p-value = 0.556). Therefore, there is not statistically significant relationship between these two variables either.
+
+We see the same lack of statistical significance between access to electricity and percent of children wasted since the p-value is less than 0.05 (p-value = 0.3668).
+
+
+When running the correlation test for electricity and children who are overweight, the p-value was also greater than 0.05 (p-value = 0.4573), indicating that this correlation is also not statistically significant.
+
+
+
+
+# Conclusion
+
+According to our correlation analysis, it appears that there are no statistically significant relationships between hunger and access to electricity in Guatemala. However, our analysis still identified departments within the country that lack access to basic needs such as electricity and have relatively high levels of hunger indicators. Therefore, these results can now be used to prioritize departments that are most in need of assistance. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
