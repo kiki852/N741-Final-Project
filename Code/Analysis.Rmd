@@ -134,7 +134,7 @@ centroids_df <- data.frame(OBJECTID = guat_sf$OBJECTID,
                             y = st_coordinates(centroids)[, 2])
 
 # Plot the map with `OBJECTID` labels
-ggplot() + 
+dprtmnt_plot <- ggplot() + 
   geom_sf(data= guat_sf, aes(fill = OBJECTID)) + 
   geom_text(data = centroids_df, aes(label = OBJECTID, x = x, y = y), size = 3) +
   guides(fill=FALSE) +
@@ -405,8 +405,8 @@ ggplot(data_sf) +
                        mid = "green",
                        high = "red",
                        midpoint=15) +
-  ggtitle("Map of Anemic Children in each Guatemalan Department") +
-  labs (fill= "Percent of Children with Anemia")
+  ggtitle("Map of Anemic Women in each Guatemalan Department") +
+  labs (fill= "Percent of Women with Anemia")
 
 
 
